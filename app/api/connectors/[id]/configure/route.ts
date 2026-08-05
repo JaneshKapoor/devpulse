@@ -1,12 +1,16 @@
 import { z } from "zod";
 
 import { handler, ok, parseBody } from "@/lib/api";
-import { PROVIDER_IDS, configureConnector } from "@/lib/connectors";
+import {
+  PROVIDER_IDS,
+  type ProviderId,
+  configureConnector,
+} from "@/lib/connectors";
 
 export const dynamic = "force-dynamic";
 
 const configureSchema = z.object({
-  provider: z.enum(PROVIDER_IDS as [string, ...string[]]),
+  provider: z.enum(PROVIDER_IDS as [ProviderId, ...ProviderId[]]),
   resources: z
     .array(
       z.object({
@@ -30,12 +34,7 @@ export async function POST(
     if (!parsed.ok) return parsed.response;
 
     const { provider, resources, lookbackDays } = parsed.data;
-    await configureConnector(
-      params.id,
-      provider as any,
-      resources,
-      lookbackDays
-    );
+    await configureConnector(params.id, provider, resources, lookbackDays);
 
     return ok({ configured: resources.length, lookbackDays });
   });

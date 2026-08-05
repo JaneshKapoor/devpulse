@@ -18,6 +18,14 @@
  * "use client" component.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * This module is the adapter boundary for HydraDB responses. The SDK types
+ * several endpoints as `Record<string, unknown>` and marks nearly every field
+ * optional, so the normalise* helpers below deliberately probe untyped payloads
+ * and convert them into the strict types this file exports. The `any` is
+ * confined to those helpers; everything crossing out of this module is typed.
+ */
+
 import "server-only";
 
 import { HydraDBClient } from "@hydradb/sdk";

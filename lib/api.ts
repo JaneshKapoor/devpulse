@@ -28,6 +28,14 @@ export function fail(error: string, code?: string, status = 500) {
   );
 }
 
+/** The subset of HydraDBError / fetch-error fields this module reads. */
+interface UpstreamError {
+  statusCode?: number;
+  status?: number;
+  body?: unknown;
+  message?: string;
+}
+
 /**
  * Translates a thrown value into a response. Missing credentials are by far the
  * most common failure when running this for the first time, so they get a
@@ -38,19 +46,20 @@ export function toErrorResponse(error: unknown) {
     return fail(error.message, error.code, 400);
   }
 
-  const anyError = error as any;
-  const status: number | undefined = anyError?.statusCode ?? anyError?.status;
+  const upstream: UpstreamError =
+    error && typeof error === "object" ? (error as UpstreamError) : {};
+  const status = upstream.statusCode ?? upstream.status;
 
   if (typeof status === "number" && status >= 400 && status < 500) {
     const detail =
-      extractMessage(anyError?.body) ??
-      anyError?.message ??
+      extractMessage(upstream.body) ??
+      upstream.message ??
       "Upstream request was rejected.";
     return fail(detail, "UPSTREAM_CLIENT_ERROR", status);
   }
 
   const message =
-    extractMessage(anyError?.body) ??
+    extractMessage(upstream.body) ??
     (error instanceof Error ? error.message : String(error));
 
   // Logged server-side so the full cause is recoverable from the terminal
@@ -63,14 +72,20 @@ export function toErrorResponse(error: unknown) {
 function extractMessage(body: unknown): string | undefined {
   if (!body) return undefined;
   if (typeof body === "string") return body.slice(0, 500);
-  if (typeof body === "object") {
-    const anyBody = body as any;
-    const candidate =
-      anyBody.error?.message ?? anyBody.message ?? anyBody.error ?? anyBody.detail;
-    if (typeof candidate === "string") return candidate.slice(0, 500);
-    return JSON.stringify(body).slice(0, 500);
-  }
-  return undefined;
+  if (typeof body !== "object") return undefined;
+
+  const bag = body as Record<string, unknown>;
+  const nested = bag.error;
+  const candidate =
+    (typeof nested === "object" && nested !== null
+      ? (nested as Record<string, unknown>).message
+      : undefined) ??
+    bag.message ??
+    nested ??
+    bag.detail;
+
+  if (typeof candidate === "string") return candidate.slice(0, 500);
+  return JSON.stringify(body).slice(0, 500);
 }
 
 /**
@@ -82,8 +97,8 @@ function extractMessage(body: unknown): string | undefined {
  * `fail` themselves rather than by this signature.
  */
 export function handler(
-  fn: () => Promise<NextResponse<any>>
-): Promise<NextResponse<any>> {
+  fn: () => Promise<NextResponse<unknown>>
+): Promise<NextResponse<unknown>> {
   return fn().catch(toErrorResponse);
 }
 

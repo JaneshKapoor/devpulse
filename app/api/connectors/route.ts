@@ -3,6 +3,7 @@ import { z } from "zod";
 import { handler, ok, parseBody } from "@/lib/api";
 import {
   PROVIDER_IDS,
+  type ProviderId,
   createConnector,
   listConnectors,
   readiness,
@@ -11,8 +12,10 @@ import { getDatabaseStatus } from "@/lib/hydradb";
 
 export const dynamic = "force-dynamic";
 
+// Typed as ProviderId (not string) so the parsed value flows straight into
+// createConnector without a cast.
 const createSchema = z.object({
-  provider: z.enum(PROVIDER_IDS as [string, ...string[]]),
+  provider: z.enum(PROVIDER_IDS as [ProviderId, ...ProviderId[]]),
 });
 
 /**
@@ -42,7 +45,7 @@ export async function POST(request: Request) {
     const parsed = await parseBody(request, createSchema);
     if (!parsed.ok) return parsed.response;
 
-    const connector = await createConnector(parsed.data.provider as any);
+    const connector = await createConnector(parsed.data.provider);
     return ok({ connector }, { status: 201 });
   });
 }

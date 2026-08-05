@@ -15,6 +15,13 @@
  * Server-only.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * Adapter boundary. The SDK types connector list/get/discover responses as
+ * `Record<string, unknown>`, and each provider names its discover fields
+ * differently, so the shaping helpers probe untyped payloads on purpose. The
+ * exported surface is fully typed.
+ */
+
 import "server-only";
 
 import { hydra } from "./hydradb";
