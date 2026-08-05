@@ -1,4 +1,4 @@
-import { handler, ok } from "@/lib/api";
+import { fail, handler, ok } from "@/lib/api";
 import {
   buildContext,
   estimateCostUsd,
@@ -108,6 +108,27 @@ export async function POST() {
     const successful = legs.filter((leg) => leg.result !== null);
     const hydraCalls = legs.length;
     const retrievalMs = Date.now() - started;
+
+    // But if *every* leg failed, the cause is systemic (missing credentials,
+    // database not provisioned, HydraDB unreachable) — not an empty workspace.
+    // Reporting "no recent activity" here would send the user to debug their
+    // connectors when the real fix is elsewhere, so surface the actual error.
+    if (!successful.length) {
+      const reasons = Array.from(
+        new Set(legs.map((leg) => leg.error).filter(Boolean) as string[])
+      );
+      // Rethrow so the shared handler maps it to the right status and code
+      // (a missing env var becomes an actionable 400, not a 500).
+      const firstRejection = settled.find((s) => s.status === "rejected");
+      if (firstRejection && firstRejection.status === "rejected") {
+        throw firstRejection.reason;
+      }
+      return fail(
+        `Every standup query failed: ${reasons.join("; ")}`,
+        "STANDUP_ALL_LEGS_FAILED",
+        502
+      );
+    }
 
     const allChunks = successful.flatMap((leg) => leg.result!.chunks);
     const allGraphPaths = successful.flatMap((leg) => leg.result!.graphPaths);
