@@ -28,7 +28,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# secrets — never commit these
+# secrets — never commit these.
+# Note the bare `.env` line: Next.js' generated .gitignore only covers
+# `.env*.local`, which would leave a plain `.env` file exposed.
 .env
 .env.local
 .env.development.local
