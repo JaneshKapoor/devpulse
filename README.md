@@ -1,36 +1,363 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DevPulse
 
-## Getting Started
+**An AI engineering intelligence agent that answers cross-source questions about a software team.**
 
-First, run the development server:
+DevPulse connects GitHub, Slack, Linear, Notion and Gmail into a single [HydraDB](https://hydradb.com) context graph, then answers questions that no one of those tools can answer alone — grounded, cited, and with the retrieval cost of every answer on display.
+
+> Built for the HydraDB × Connectors Hackathon.
+
+---
+
+## The problem
+
+Ask any of these in a single tool and you get nothing useful:
+
+| Question | Why one tool can't answer it |
+|---|---|
+| *"Who filed BUG-123, which project are they working on, and what did they say about the fix in Slack?"* | Three hops across two systems that share no identifier. |
+| *"The manager messaged Janesh about the auth PR on Gmail, Slack and Linear today — which is the source of truth, and has he responded anywhere?"* | One logical request duplicated across three systems; the reply is in only one of them. |
+| *"What did the team decide about the auth refactor in Slack, and has anyone started implementing it in GitHub?"* | Links a conversational decision to code activity. |
+| *"What was blocked last sprint that is still blocked this sprint?"* | Temporal comparison — two states must be retrieved and diffed. |
+
+DevPulse answers all four. Every claim cites the record it came from.
+
+---
+
+## Architecture
+
+```
+                        ┌──────────────────────────────────────┐
+                        │           Browser (Next.js)          │
+                        │                                      │
+                        │  /            landing                │
+                        │  /setup       connector wizard       │
+                        │  /upload      document ingestion     │
+                        │  /dashboard   Standup · Ask · Metrics│
+                        └───────────────────┬──────────────────┘
+                                            │  fetch (no secrets client-side)
+                        ┌───────────────────▼──────────────────┐
+                        │      Next.js API routes (server)     │
+                        │                                      │
+                        │  /api/connectors/*  lifecycle        │
+                        │  /api/ingest        document upload  │
+                        │  /api/ask           core Q&A         │
+                        │  /api/standup       parallel brief   │
+                        │  /api/metrics       query log        │
+                        └──────┬────────────────────┬──────────┘
+                               │                    │
+              ┌────────────────▼─────────┐  ┌───────▼──────────────┐
+              │         HydraDB          │  │     Fireworks AI     │
+              │                          │  │                      │
+              │  database: devpulse_team │  │  synthesis + citation│
+              │  ├── collection github   │  │  JSON mode with      │
+              │  ├── collection slack    │  │  plain-text fallback │
+              │  ├── collection linear   │  └──────────────────────┘
+              │  ├── collection notion   │
+              │  ├── collection gmail    │
+              │  └── collection docs     │
+              │                          │
+              │  fast / thinking mode    │
+              │  + context graph         │
+              └──────────────────────────┘
+```
+
+### The request path for one question
+
+```
+question
+   │
+   ├─▶ classifyQueryComplexity()      ← lib/query-router.ts
+   │     scores 6 signals, picks fast or thinking, records why
+   │
+   ├─▶ queryHydra()                   ← lib/hydradb.ts
+   │     mode + queryApps + graphContext (thinking only)
+   │     measures latency and call count
+   │
+   ├─▶ synthesizeAnswer()             ← lib/fireworks.ts
+   │     grounded prompt, inline [Source: …] citations
+   │
+   ├─▶ recordMetric()                 ← lib/metrics-store.ts
+   │
+   └─▶ answer + sources + full metadata strip
+```
+
+---
+
+## Quick start
+
+### 1. Install
+
+```bash
+git clone https://github.com/JaneshKapoor/devpulse.git
+cd devpulse
+npm install
+```
+
+### 2. Configure credentials
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local` is gitignored and must never be committed. Fill in at minimum:
+
+| Variable | Required | Where to get it |
+|---|---|---|
+| `HYDRA_DB_API_KEY` | **yes** | [app.hydradb.com](https://app.hydradb.com) |
+| `FIREWORKS_API_KEY` | **yes** | [Fireworks API keys](https://app.fireworks.ai/settings/users/api-keys) |
+| `FIREWORKS_MODEL_ID` | **yes** | run `npm run list-models` (see below) |
+| `GITHUB_CONNECTOR_TOKEN` + `GITHUB_ORG_OR_USER` | for GitHub | PAT with `repo` + `read:org` — [settings/tokens](https://github.com/settings/tokens) |
+| `SLACK_CONNECTOR_TOKEN` + `SLACK_WORKSPACE_ID` | for Slack | Token with `channels:history`, `channels:read`, `users:read` — [api.slack.com/apps](https://api.slack.com/apps) |
+| `LINEAR_CONNECTOR_TOKEN` | for Linear | Linear → Settings → API |
+| `NOTION_CONNECTOR_TOKEN` | for Notion | [notion.so/my-integrations](https://www.notion.so/my-integrations) — remember to *share* pages with the integration |
+| `GMAIL_CONNECTOR_TOKEN` + `GMAIL_ACCOUNT_EMAIL` | for Gmail | OAuth token with `gmail.readonly` |
+
+Fireworks' serverless catalogue changes often, so don't guess the model ID:
+
+```bash
+npm run list-models
+```
+
+This prints the models your account can actually call. Paste one into `FIREWORKS_MODEL_ID`.
+
+### 3. Provision the HydraDB database
+
+```bash
+npm run setup:hydradb
+```
+
+Creates the database and **blocks until `infra.readyForIngestion` is true** — provisioning is asynchronous, and ingesting before it completes fails in confusing ways. Safe to re-run.
+
+### 4. Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [localhost:3000](http://localhost:3000) → **Connectors** → connect each source.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 5. (Optional) Seed the demo scenario
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run seed:demo
+```
 
-## Learn More
+Guarantees the hard questions work live even if your real workspace has no such pattern today. See [Demo data](#demo-data) for exactly what this does and doesn't claim.
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Using it
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Connectors (`/setup`)
 
-## Deploy on Vercel
+Each provider walks the full HydraDB lifecycle, with a visible status per stage:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+create ──▶ discover ──▶ configure ──▶ sync
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **discover** lists what the account can see and pages through the cursor, so a workspace with more than 100 channels isn't silently truncated at one page.
+- **configure** activates the resources you tick, with `lookbackDays: 30`.
+- **sync** is triggered explicitly. The scheduler's default is hourly, which is unusable during a demo, so configure chains straight into a sync and every connector gets a **Sync now** button.
+
+Missing credentials render inline, naming the exact env var to set.
+
+### Documents (`/upload`)
+
+A **separate ingestion path** from connectors: one-time file upload (PDF / Markdown / text / DOCX) into the `docs` collection. Connectors sync continuously; this doesn't. Both land in the same database, so one question can span a written spec *and* live Slack activity.
+
+Indexing is asynchronous, so the page polls until each document reports terminal status before inviting you to query it.
+
+### Dashboard (`/dashboard`)
+
+**Standup Brief** — four narrow retrievals run in parallel rather than one broad question. Each gets the cheapest mode that can answer it; only the blockers leg pays for thinking mode, because only it needs to link a blocked ticket to the conversation explaining it. The brief costs roughly its slowest leg, not their sum. One failing leg degrades the brief instead of losing it.
+
+**Ask DevPulse** — free-text input plus six one-click chips covering the hard cases. Shows a live trace (routing → retrieval → synthesis), then the answer with inline citations, a Sources panel marking which sources were actually cited, and a metadata strip.
+
+**Metrics** — every question logged with its routing decision, latency split, HydraDB call count and sources hit.
+
+---
+
+## Fast mode vs thinking mode
+
+The hackathon asks *how far you can push fast mode without sacrificing accuracy*. DevPulse answers that deliberately: it **classifies every question before touching HydraDB** rather than delegating to `mode: "auto"`.
+
+`lib/query-router.ts` scores six signals:
+
+| Signal | Weight | Fires when |
+|---|---|---|
+| `multi_source` | 3 | Two or more providers named |
+| `multi_hop_phrasing` | 2–3 | "source of truth", "has anyone", "and where", … |
+| `compound_question` | 2 | Two or more question words in one ask |
+| `ticket_reference` | 1–2 | A ticket ID, weighted higher alongside another entity |
+| `temporal_comparison` | 2 | "still", "last sprint", "this sprint", … |
+| `multi_clause` | 1 | Three or more clauses |
+
+Score **≥ 3 → thinking mode** (with `graphContext`), otherwise **fast mode**. Thinking mode costs real latency, so it's spent only where a second logical hop is genuinely required.
+
+The classifier returns *its reasons* alongside the decision. Those reasons drive the live trace and the Metrics table — a routing rule that can't be explained to a judge isn't worth having.
+
+Regression-tested:
+
+```bash
+npm run test:router
+# 13/13 passed
+```
+
+---
+
+## Hackathon submission
+
+### Deliverables
+
+| Requirement | Status |
+|---|---|
+| 3+ working connectors | **5** — GitHub, Slack, Linear, Notion, Gmail |
+| Document ingestion | `/upload` → `POST /context/ingest`, `type=knowledge`, `docs` collection |
+| Difficult cross-source questions | 6 pre-seeded, 5 multi-hop (below) |
+| Expected vs actual answers | Table below |
+| Latency / accuracy results | Metrics tab + table below |
+| 60-second demo | *(video link to be added)* |
+
+### Hard questions — expected vs actual
+
+Run these from the chips on the Ask tab. Fill the **Actual** column from your own run; the Metrics tab gives you the numbers directly.
+
+| # | Question | Routed (score) | Sources expected | Expected answer | Actual |
+|---|---|---|---|---|---|
+| 1 | What has the manager asked Janesh to do today, across which channels, and where has he responded? | thinking (9) | Gmail, Slack, Linear | One request — review PR #482 — duplicated across all three. **Linear ENG-482 is the record of truth** (stated as such in the email itself). Responded **only in Slack** at 11:02, flagging the mobile refresh path. No Gmail reply, no Linear comment. | *(fill in)* |
+| 2 | Who filed BUG-123, which project are they working on, and what did they say about the fix in Slack? | thinking (11) | Linear, Slack | Filed by **Arjun Mehta**, project **Checkout Reliability** (Payments team). In `#payments` he said the fix is moving idempotency key generation from per-attempt to per-checkout-session. | *(fill in)* |
+| 3 | What did the team decide about the auth refactor in Slack, and has anyone started implementing it in GitHub? | thinking (6) | Slack, GitHub | Decision: short-lived 15-minute tokens plus refresh, two-week dual-accept window, Dmitri to implement. **Yes** — PR #482 implements it, currently open awaiting Janesh's review. | *(fill in)* |
+| 4 | What was blocked last sprint that is still blocked this sprint? | thinking (8) | Linear, Slack | **ENG-455** (Redis cluster migration), blocked on INFRA-88 for two weeks and still blocked. ENG-470 was blocked last sprint but is now done — should be excluded. | *(fill in)* |
+| 5 | Which pull requests are waiting on review, and has anyone flagged them in Slack? | thinking | GitHub, Slack | PR #481 (needs Dmitri) and PR #482 (needs Janesh). Sofia flagged both in `#eng-platform`, noting they block the Thursday cut. | *(fill in)* |
+| 6 | What did the team ship this week? | **fast** | GitHub | PR #479 (idempotency keys, fixes BUG-123) and PR #476 (rate limiter, ENG-470), both merged. Single-hop — demonstrates the router keeping easy questions cheap. | *(fill in)* |
+
+**Why question 1 is the interesting one:** the useful answer isn't *what* was asked — all three channels say the same thing. It's *"this is one request, not three; here is the tracked record; here is the single place he actually replied."* That's reasoning a per-tool search cannot do at all.
+
+### Latency / accuracy
+
+Measured client-side around each call and recorded per question. Read the live numbers from the **Metrics** tab after a run; the shape to expect:
+
+| Metric | Where it comes from |
+|---|---|
+| % answered in fast mode | Metrics tab, scored against the 60% target |
+| Avg latency, split fast vs thinking | Reported separately — the blended average hides the tradeoff |
+| Avg HydraDB calls per question | 1 per Ask; 4 per Standup Brief (parallel) |
+| Retrieval vs synthesis split | Per-answer metadata strip |
+| Est. cost | Fireworks token usage at a blended rate |
+
+> On the router's own regression suite, 5 of 10 representative questions stay on fast mode. That ratio is dominated by the demo set being deliberately multi-hop-heavy; a realistic mix of day-to-day questions routes to fast mode far more often, which is what the Metrics tab measures live.
+
+### Reproducibility
+
+Everything is one command:
+
+```bash
+npm install
+cp .env.example .env.local     # add keys
+npm run setup:hydradb          # blocks until ready
+npm run seed:demo              # optional, guarantees the demo
+npm run dev
+```
+
+```bash
+npm run test:router            # routing regression, no credentials needed
+npm run typecheck              # clean
+npm run lint                   # clean
+npm run build                  # clean
+```
+
+---
+
+## Demo data
+
+`npm run seed:demo` ingests ~16 records covering the featured scenario and every example chip.
+
+**To be precise about what this is:** seeded records are ingested as `knowledge` documents into the collection matching their provider (Slack records → `slack`, and so on) and tagged with provider metadata, so the UI attributes and links them exactly as it would connector-synced data. It is **not** simulating a connector sync, and it does not replace the real connectors — those remain the primary path. It exists so the hard cross-source questions demo reliably even when the presenter's live workspace has no such pattern on the day.
+
+Everything in it is fictional: `example/platform`, `example.slack.com`, and invented teammates.
+
+---
+
+## Deployment (Vercel)
+
+```bash
+npm i -g vercel
+vercel
+```
+
+Add every variable from `.env.example` under **Project → Settings → Environment Variables**. `vercel.json` already raises `maxDuration` to 60s for the LLM-backed routes (`/api/ask`, `/api/standup`, `/api/ingest`).
+
+**One caveat:** the metrics log writes to `data/metrics.json`, and serverless filesystems are read-only. `lib/metrics-store.ts` detects this and falls back to an in-memory log — metrics stay correct within a warm instance but don't persist across cold starts. For a hackathon demo that's the right trade; for production, swap the store for Postgres or KV. The interface is three functions, so it's a contained change.
+
+---
+
+## Project layout
+
+```
+app/
+├── page.tsx                     landing — spotlight hero, animated reveal
+├── setup/page.tsx               connector wizard
+├── upload/page.tsx              document ingestion
+├── dashboard/page.tsx           3 tabs
+└── api/
+    ├── connectors/route.ts              GET readiness · POST create
+    ├── connectors/[id]/discover|configure|sync|status
+    ├── ingest/route.ts                  POST upload · GET index status
+    ├── ask/route.ts                     core Q&A
+    ├── standup/route.ts                 parallel brief
+    └── metrics/route.ts                 GET log · DELETE reset
+
+components/
+├── ui/                          shadcn primitives + spotlight, text-reveal
+├── ConnectorCard.tsx            per-provider lifecycle card
+├── AskDevPulse.tsx              input, chips, live trace
+├── AnswerCard.tsx               answer + citations + metadata strip
+├── StandupBrief.tsx             brief renderer
+└── MetricsTable.tsx             table + summary stat cards
+
+lib/
+├── hydradb.ts                   client + normalised query surface (server-only)
+├── connectors.ts                per-provider lifecycle (server-only)
+├── documents.ts                 document ingestion (server-only)
+├── fireworks.ts                 synthesis + JSON-mode fallback (server-only)
+├── query-router.ts              classifyQueryComplexity — pure, testable
+├── metrics-store.ts             JSON log with in-memory fallback (server-only)
+├── types.ts                     shapes shared with client components
+├── example-questions.ts         the hard questions
+├── demo-scenario.ts             seed dataset
+├── api.ts                       shared response envelope + Zod helpers
+└── env.ts                       lazy, typed env access
+
+scripts/
+├── setup-hydradb.ts             provision + poll until ready
+├── seed-demo-scenario.ts        ingest demo dataset
+├── list-fireworks-models.ts     print callable model IDs
+└── test-router.ts               routing regression
+```
+
+---
+
+## Implementation notes
+
+Things that are easy to get wrong against this stack, recorded because they cost real debugging time:
+
+**The SDK namespace is `databases`, not `tenants`.** `@hydradb/sdk@2.1.2` exposes `databases`, `connectors`, `context` and `webhooks`. "Tenant" is the deprecated name for a database and survives only as request-field aliases.
+
+**SDK request fields are camelCase.** The SDK serialises to snake_case itself. Writing `query_apps` or `max_results` does not error — it is silently dropped, quietly degrading retrieval. Always `queryApps`, `maxResults`, `graphContext`, `lookbackDays`, `providerAccountScope`.
+
+**`documentMetadata` is a JSON-encoded string**, not an object.
+
+**Gmail has no `provider_account_scope`.** Every other provider gets a workspace or org identifier to keep connectors from colliding; Gmail carries its account email in `additional_metadata.account_email` instead, and authenticates via OAuth rather than an API token.
+
+**`server-only` throws under plain Node.** The scripts import `lib/hydradb.ts`, so they run with `--conditions=react-server`, which resolves `server-only` to its empty module — keeping the guard intact for the Next build without breaking CLI usage.
+
+**Database creation is asynchronous.** Poll `databases.status()` until `infra.readyForIngestion` before ingesting or querying.
+
+**Next.js 14.2.35** is the latest 14.x patch. `npm audit` reports advisories whose fixed ranges extend past 14.x, so staying on the pinned major means inheriting them. They are predominantly denial-of-service and cache-poisoning issues affecting self-hosted configurations. Worth knowing before deploying this beyond a demo.
+
+---
+
+## License
+
+MIT
