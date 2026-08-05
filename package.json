@@ -11,7 +11,10 @@
     "setup:hydradb": "tsx --conditions=react-server scripts/setup-hydradb.ts",
     "seed:demo": "tsx --conditions=react-server scripts/seed-demo-scenario.ts",
     "list-models": "tsx scripts/list-fireworks-models.ts",
-    "test:router": "tsx scripts/test-router.ts"
+    "test": "npm run test:router && npm run test:synthesis",
+    "test:router": "tsx scripts/test-router.ts",
+    "test:synthesis": "tsx --conditions=react-server scripts/test-synthesis.ts",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {
     "@hydradb/sdk": "^2.1.2",
@@ -24,7 +27,6 @@
     "@radix-ui/react-tabs": "^1.1.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.43.0",
     "lucide-react": "^1.28.0",
     "next": "14.2.35",
     "openai": "^7.4.0",

@@ -76,19 +76,19 @@ export default function Home() {
             </span>
           </FadeIn>
 
-          <FadeIn delay={0.06}>
+          <FadeIn step={1}>
             <h1 className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-7xl">
               Dev<span className="text-pulse">Pulse</span>
             </h1>
           </FadeIn>
 
           <TextReveal
-            delay={0.16}
+            startStep={120}
             text="Ask one question. Get one answer, grounded across every tool your team actually works in."
             className="mx-auto mt-6 max-w-2xl text-balance text-lg text-muted-foreground sm:text-xl"
           />
 
-          <FadeIn delay={0.45}>
+          <FadeIn step={4}>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
               {SOURCES.map((source) => (
                 <span
@@ -102,7 +102,7 @@ export default function Home() {
             </div>
           </FadeIn>
 
-          <FadeIn delay={0.55}>
+          <FadeIn step={5}>
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
               <Button asChild size="lg">
                 <Link href="/dashboard">
@@ -118,7 +118,7 @@ export default function Home() {
 
         {/* The hard questions, stated up front — this is the actual pitch. */}
         <section className="mx-auto max-w-5xl px-6 pb-20">
-          <FadeIn delay={0.62}>
+          <FadeIn step={6}>
             <p className="mb-4 text-center text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Questions no single tool can answer
             </p>
@@ -153,7 +153,7 @@ export default function Home() {
         <section className="mx-auto max-w-6xl px-6 pb-24">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {CAPABILITIES.map(({ Icon, title, body }, index) => (
-              <FadeIn key={title} delay={0.68 + index * 0.05}>
+              <FadeIn key={title} step={Math.min(6 + index, 7)}>
                 <div className="h-full rounded-lg border border-border bg-card/60 p-5 backdrop-blur transition-colors hover:border-pulse/30">
                   <Icon className="h-4 w-4 text-pulse" />
                   <h3 className="mt-3 text-sm font-medium">{title}</h3>
