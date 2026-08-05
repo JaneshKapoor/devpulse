@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "setup:hydradb": "tsx scripts/setup-hydradb.ts",
     "seed:demo": "tsx scripts/seed-demo-scenario.ts",
-    "list-models": "tsx scripts/list-fireworks-models.ts"
+    "list-models": "tsx scripts/list-fireworks-models.ts",
+    "test:router": "tsx scripts/test-router.ts"
   },
   "dependencies": {
     "@hydradb/sdk": "^2.1.2",

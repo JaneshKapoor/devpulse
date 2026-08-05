@@ -31,6 +31,7 @@ import "server-only";
 import { HydraDBClient } from "@hydradb/sdk";
 
 import { HYDRA_API_VERSION, HYDRA_DATABASE, requireEnv } from "./env";
+import type { RecallMode } from "./types";
 
 let _client: HydraDBClient | null = null;
 
@@ -49,7 +50,7 @@ export function hydra(): HydraDBClient {
 
 // --- Types ------------------------------------------------------------------
 
-export type RecallMode = "fast" | "thinking" | "auto";
+export type { RecallMode };
 
 export interface RetrievedChunk {
   id: string;
