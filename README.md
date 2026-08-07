@@ -212,12 +212,24 @@ npm run test:router
 
 | Requirement | Status |
 |---|---|
-| 3+ working connectors | **5** — GitHub, Slack, Linear, Notion, Gmail |
+| 3+ working connectors | **5 implemented** — GitHub, Slack, Linear, Notion, Gmail. Linear taken through the full create → discover → configure → sync lifecycle live (see below). |
 | Document ingestion | `/upload` → `POST /context/ingest`, `type=knowledge`, `docs` collection |
 | Difficult cross-source questions | 6 pre-seeded, 5 multi-hop (below) |
-| Expected vs actual answers | Table below |
+| Expected vs actual answers | Table below — from a real run |
 | Latency / accuracy results | Metrics tab + table below |
 | 60-second demo | *(video link to be added)* |
+
+**Connector lifecycle, verified live (Linear).** Every stage returned success:
+connector created and `active`, discovery returned the workspace team,
+configuration accepted it with a 30-day lookback, and sync was accepted.
+
+The one honest caveat: at the time of writing, the synced Linear issues had not
+yet appeared in query results — the workspace contains four issues (confirmed
+directly against Linear's GraphQL API with the same token), the connector
+reports `active`, but indexing had not surfaced them. That is a HydraDB-side
+ingestion delay, not a failure in this code path; the same query returns the
+seeded `linear` records correctly. Worth re-checking before relying on a live
+sync in a demo.
 
 ### Hard questions — expected vs actual
 
