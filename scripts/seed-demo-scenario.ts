@@ -66,16 +66,24 @@ async function main() {
         collection: record.collection,
         type: "knowledge",
         documents: file,
-        documentMetadata: JSON.stringify({
-          provider: record.provider,
-          source: "devpulse_demo_seed",
-          title: record.title,
-          url: record.url,
-          author: record.author,
-          timestamp: record.timestamp,
-          external_id: record.externalId,
-          ...record.metadata,
-        }),
+        // A JSON-encoded *array*, one entry per document in `documents`, and
+        // each entry is a fixed envelope — arbitrary keys at the top level are
+        // rejected with INVALID_INPUT. Everything of ours goes under
+        // `additional_metadata`, which is what the query layer reads back.
+        documentMetadata: JSON.stringify([
+          {
+            additional_metadata: {
+              provider: record.provider,
+              source: "devpulse_demo_seed",
+              title: record.title,
+              url: record.url,
+              author: record.author,
+              timestamp: record.timestamp,
+              external_id: record.externalId,
+              ...record.metadata,
+            },
+          },
+        ]),
       });
 
       const results = (response as any)?.data?.results ?? [];

@@ -62,6 +62,55 @@ check(
   prose.sourcesUsed
 );
 
+// A reasoning model that emits its working before the answer. The thinking
+// must never become the answer, and braces written while thinking must not
+// corrupt the extracted object.
+const reasoning = parseAnswer(
+  'Let me trace through the context. The user asks {who} filed it.\n' +
+    'Draft: maybe Arjun? I should cite {"note":"not the answer"}.\n' +
+    'Final:\n{"answer":"Arjun Mehta filed BUG-123 [Source: BUG-123]","confidence":"high","sources_used":["BUG-123"],"requires_followup":false}'
+);
+check(
+  "untagged reasoning: answer taken, not the thinking",
+  reasoning.answer === "Arjun Mehta filed BUG-123 [Source: BUG-123]",
+  reasoning.answer
+);
+check("untagged reasoning: confidence from JSON", reasoning.confidence === "high");
+
+const tagged = parseAnswer(
+  '<think>I need to check who filed it. Probably Arjun.</think>\n' +
+    '{"answer":"Arjun Mehta filed it","confidence":"high","sources_used":[]}'
+);
+check(
+  "<think> block stripped",
+  tagged.answer === "Arjun Mehta filed it" && !tagged.answer.includes("I need to"),
+  tagged.answer
+);
+
+const truncatedThought = parseAnswer(
+  "Here is what I found.\n<think>Let me reconsider the timeline and"
+);
+check(
+  "unclosed <think>: keeps the text before it",
+  truncatedThought.answer === "Here is what I found.",
+  truncatedThought.answer
+);
+
+// Truncated JSON — the model ran out of tokens before closing the envelope.
+// The user must see the answer, never the raw `{"answer":"…` wrapper.
+const cut = parseAnswer(
+  '{\n"answer":"**Shipped**\\n- PR #479 merged, fixing the double-charge bug [Source: PR #479]\\n- PR #476 merged [Source: PR #476]\\n\\n**Blocked**\\n- ENG-455 is waiting on INFRA-8'
+);
+check("truncated JSON: envelope not shown", !cut.answer.startsWith("{"), cut.answer.slice(0, 40));
+check("truncated JSON: content recovered", cut.answer.startsWith("**Shipped**"), cut.answer.slice(0, 40));
+check("truncated JSON: escapes decoded", cut.answer.includes("\n- PR #479"));
+check("truncated JSON: flagged for followup", cut.requiresFollowup && cut.confidence === "medium");
+
+check(
+  "prose mentioning 'answer' is not mistaken for truncated JSON",
+  parseAnswer("The answer is that Arjun filed it [Source: BUG-123]").answer.startsWith("The answer")
+);
+
 // Honest refusals must be surfaced, not treated as confident answers.
 const insufficient = parseAnswer(
   "There is not enough information in the provided context to answer."

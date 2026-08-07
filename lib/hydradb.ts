@@ -119,7 +119,10 @@ function normaliseChunk(raw: Record<string, any>): RetrievedChunk {
   return {
     id: String(raw.chunkUuid ?? raw.id ?? ""),
     content: String(raw.chunkContent ?? ""),
-    sourceTitle: String(raw.sourceTitle ?? "Untitled source"),
+    // `sourceTitle` is the stored filename ("ENG-482.md", "thread-a91f22.md"),
+    // which is meaningless in a citation. The human title we ingested lives in
+    // additional_metadata, so prefer it and keep the filename as the fallback.
+    sourceTitle: pickTitle(additional, metadata) ?? String(raw.sourceTitle ?? "Untitled source"),
     sourceType: String(raw.sourceType ?? "unknown"),
     collection: String(raw.subTenantId ?? ""),
     score: typeof raw.relevancyScore === "number" ? raw.relevancyScore : 0,
@@ -133,25 +136,42 @@ function normaliseChunk(raw: Record<string, any>): RetrievedChunk {
 }
 
 function normaliseSource(raw: Record<string, any>): RetrievedSource {
+  const additional = (raw.additionalMetadata ?? {}) as Record<string, unknown>;
+  const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
   return {
     id: String(raw.id ?? ""),
-    title: String(raw.title ?? "Untitled source"),
-    url: raw.url ? String(raw.url) : pickUrl(raw.additionalMetadata, raw.metadata),
-    provider: raw.appProvider ? String(raw.appProvider) : undefined,
+    title: pickTitle(additional, metadata) ?? String(raw.title ?? "Untitled source"),
+    // `raw.url` is the internal storage location (an `s3://` object path), not
+    // somewhere a human can click. Metadata is checked first and only http(s)
+    // links are accepted, so a storage path never reaches the UI.
+    url: pickUrl(additional, metadata, raw),
+    provider: raw.appProvider ? String(raw.appProvider) : pickProvider(additional, metadata),
     collection: raw.subTenantId ? String(raw.subTenantId) : undefined,
     timestamp: raw.timestamp ? String(raw.timestamp) : undefined,
     externalId: raw.appExternalId ? String(raw.appExternalId) : undefined,
   };
 }
 
-/** Different providers stash the permalink under different metadata keys. */
+/** The human-readable title we ingested, as opposed to the stored filename. */
+function pickTitle(...bags: Array<Record<string, unknown> | undefined>) {
+  for (const bag of bags) {
+    const value = bag?.title;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+/**
+ * Different providers stash the permalink under different metadata keys.
+ * Only http(s) values qualify — internal `s3://` storage paths are not links.
+ */
 function pickUrl(...bags: Array<Record<string, unknown> | undefined>) {
   const keys = ["url", "permalink", "html_url", "web_url", "link", "source_url"];
   for (const bag of bags) {
     if (!bag) continue;
     for (const key of keys) {
       const value = bag[key];
-      if (typeof value === "string" && value.startsWith("http")) return value;
+      if (typeof value === "string" && /^https?:\/\//.test(value)) return value;
     }
   }
   return undefined;
@@ -208,6 +228,47 @@ function renderPath(path: any): string | null {
   return null;
 }
 
+// --- Collection resolution --------------------------------------------------
+
+/**
+ * Collections must be named explicitly on every query.
+ *
+ * Two API behaviours force this. Omitting `collections` does not search
+ * everything — it searches nothing and returns zero chunks, silently, which
+ * looks exactly like an empty workspace. And naming a collection that does not
+ * exist yet is a hard 400 (`sub_tenant_ids do not exist`), so we cannot simply
+ * pass the full static list either: a collection only comes into being once
+ * something has been ingested into it.
+ *
+ * So every query resolves its scope against the collections that actually
+ * exist right now.
+ */
+const COLLECTION_CACHE_MS = 30_000;
+let collectionCache: { at: number; value: string[] } | null = null;
+
+async function existingCollections(): Promise<string[]> {
+  if (collectionCache && Date.now() - collectionCache.at < COLLECTION_CACHE_MS) {
+    return collectionCache.value;
+  }
+  const value = await listCollections();
+  collectionCache = { at: Date.now(), value };
+  return value;
+}
+
+/** Called after ingestion, which may have brought a new collection into being. */
+export function invalidateCollectionCache(): void {
+  collectionCache = null;
+}
+
+const EMPTY_RESULT = (mode: RecallMode, latencyMs: number): HydraQueryResult => ({
+  chunks: [],
+  sources: [],
+  graphPaths: [],
+  latencyMs,
+  mode,
+  apiCalls: 0,
+});
+
 // --- Core query -------------------------------------------------------------
 
 /**
@@ -220,7 +281,7 @@ export async function queryHydra(
   const {
     question,
     mode,
-    maxResults = mode === "thinking" ? 10 : 8,
+    maxResults = mode === "thinking" ? 24 : 10,
     collections,
     metadataFilters,
     graphContext = mode === "thinking",
@@ -228,6 +289,19 @@ export async function queryHydra(
   } = options;
 
   const started = Date.now();
+
+  // Resolve scope against reality: unscoped means "every collection that
+  // exists", and a requested collection that has never been ingested into is
+  // dropped rather than 400-ing the whole query.
+  const available = await existingCollections();
+  const scope = collections?.length
+    ? collections.filter((name) => available.includes(name))
+    : available;
+
+  // Nothing to search — a workspace with no ingested data, or a question
+  // scoped to a source that has not synced yet. Both are empty results, not
+  // errors, and neither is worth a round-trip.
+  if (!scope.length) return EMPTY_RESULT(mode, Date.now() - started);
 
   const response = await hydra().query({
     query: question,
@@ -240,7 +314,7 @@ export async function queryHydra(
     graphContext,
     type: "all",
     queryBy: "hybrid",
-    ...(collections?.length ? { collections } : {}),
+    collections: scope,
     ...(metadataFilters ? { metadataFilters } : {}),
     ...(additionalContext ? { additionalContext } : {}),
   });

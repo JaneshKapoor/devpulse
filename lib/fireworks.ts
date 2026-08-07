@@ -29,9 +29,13 @@ export function fireworks(): OpenAI {
 }
 
 export function modelId(): string {
+  // The fallback is only a last resort — the catalogue changes, so any pinned
+  // ID can stop existing. `npm run list-models` prints what an account can
+  // actually call. Prefer a non-reasoning model here: reasoning models emit
+  // their chain of thought, which competes with the answer for the token
+  // budget and truncates the JSON envelope.
   return (
-    optionalEnv("FIREWORKS_MODEL_ID") ??
-    "accounts/fireworks/models/kimi-k2-instruct-0905"
+    optionalEnv("FIREWORKS_MODEL_ID") ?? "accounts/fireworks/models/gpt-oss-120b"
   );
 }
 
@@ -116,10 +120,17 @@ export async function synthesizeAnswer({
   question,
   context,
   extraInstruction,
+  maxTokens = 2400,
 }: {
   question: string;
   context: string;
   extraInstruction?: string;
+  /**
+   * Generous by default. Running out mid-answer truncates the JSON envelope,
+   * which costs the whole structured response — a far worse outcome than the
+   * marginal tokens. Multi-section output (the standup brief) should raise it.
+   */
+  maxTokens?: number;
 }): Promise<SynthesisResult> {
   const model = modelId();
   const client = fireworks();
@@ -147,7 +158,7 @@ export async function synthesizeAnswer({
       model,
       messages,
       temperature: 0.2,
-      max_tokens: 1400,
+      max_tokens: maxTokens,
       response_format: { type: "json_object" },
     });
   } catch (error) {
@@ -158,7 +169,7 @@ export async function synthesizeAnswer({
       model,
       messages,
       temperature: 0.2,
-      max_tokens: 1400,
+      max_tokens: maxTokens,
     });
   }
 
@@ -210,7 +221,9 @@ export function parseAnswer(raw: string): ParsedAnswer {
     };
   }
 
-  const candidate = extractJsonObject(raw);
+  const text = stripReasoning(raw) || raw;
+
+  const candidate = extractJsonObject(text);
   if (candidate) {
     try {
       const parsed = JSON.parse(candidate) as Record<string, unknown>;
@@ -231,25 +244,148 @@ export function parseAnswer(raw: string): ParsedAnswer {
     }
   }
 
+  // The model produced JSON but ran out of tokens before closing it, so no
+  // balanced object exists. Salvage the answer string rather than showing the
+  // user a raw `{"answer":"…` envelope — the content is there, only the
+  // punctuation is missing.
+  const truncated = recoverTruncatedAnswer(text);
+  if (truncated) {
+    return {
+      answer: truncated,
+      // Never "high": the answer is by definition cut off mid-thought.
+      confidence: "medium",
+      sourcesUsed: extractCitedTitles(truncated),
+      requiresFollowup: true,
+      wasJson: false,
+    };
+  }
+
   return {
-    answer: raw,
-    confidence: inferConfidence(raw),
-    sourcesUsed: extractCitedTitles(raw),
+    answer: text,
+    confidence: inferConfidence(text),
+    sourcesUsed: extractCitedTitles(text),
     requiresFollowup: /not enough (information|context)|cannot (confidently )?(determine|answer)|no (relevant )?context/i.test(
-      raw
+      text
     ),
     wasJson: false,
   };
 }
 
-/** Finds a JSON object even when fenced or surrounded by commentary. */
+/**
+ * Removes a reasoning model's visible chain of thought.
+ *
+ * Reasoning models emit their working before the answer. Left in, it becomes
+ * the "answer" the user reads — pages of "Let me trace through the context…"
+ * and self-directed drafting notes. Tagged blocks are stripped here; untagged
+ * reasoning is handled by extractJsonObject preferring the *last* valid object,
+ * which is the answer rather than anything quoted while thinking.
+ */
+function stripReasoning(raw: string): string {
+  return raw
+    .replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, "")
+    // An unclosed opening tag means the model was cut off mid-thought; keep
+    // whatever came before it rather than discarding the whole response.
+    .replace(/<(think|thinking|reasoning)>[\s\S]*$/i, "")
+    .trim();
+}
+
+/**
+ * Finds a JSON object even when fenced, or preceded by commentary or reasoning.
+ *
+ * Scans for balanced brace spans and returns the last one that both parses and
+ * carries an `answer` field. Taking the first `{` to the last `}` — the obvious
+ * approach — breaks as soon as the model writes a brace while thinking, because
+ * the resulting span spliced together two unrelated objects.
+ */
 function extractJsonObject(raw: string): string | null {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const text = (fenced?.[1] ?? raw).trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  return text.slice(start, end + 1);
+  // Collected with exec rather than spreading matchAll: the project targets a
+  // pre-ES2015 lib, where iterating a RegExp iterator needs downlevelIteration.
+  const fenced: string[] = [];
+  const fence = /```(?:json)?\s*([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fence.exec(raw)) !== null) fenced.push(match[1].trim());
+
+  const haystacks = fenced.length ? fenced.reverse() : [raw];
+
+  for (const text of haystacks) {
+    const spans = balancedObjectSpans(text);
+    for (let i = spans.length - 1; i >= 0; i--) {
+      try {
+        const parsed = JSON.parse(spans[i]) as Record<string, unknown>;
+        if (typeof parsed.answer === "string" && parsed.answer.trim()) {
+          return spans[i];
+        }
+      } catch {
+        // Not valid JSON — keep scanning earlier spans.
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Pulls the `answer` value out of a JSON object that was never closed.
+ *
+ * Walks the string literal by hand, honouring escapes, and stops at the
+ * unescaped closing quote or at the end of the text — whichever comes first.
+ * Returns null unless this really looks like a truncated envelope, so ordinary
+ * prose that happens to contain the word "answer" is left alone.
+ */
+function recoverTruncatedAnswer(text: string): string | null {
+  const match = /\{\s*"answer"\s*:\s*"/.exec(text);
+  if (!match) return null;
+
+  let out = "";
+  let escaped = false;
+  for (let i = match.index + match[0].length; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) {
+      out += char === "n" ? "\n" : char === "t" ? "\t" : char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === '"') {
+      break;
+    } else {
+      out += char;
+    }
+  }
+
+  const answer = out.trim();
+  return answer.length > 40 ? answer : null;
+}
+
+/** Every balanced `{…}` span in the text, ignoring braces inside strings. */
+function balancedObjectSpans(text: string): string[] {
+  const spans: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        spans.push(text.slice(start, i + 1));
+        start = -1;
+      } else if (depth < 0) {
+        depth = 0;
+      }
+    }
+  }
+  return spans;
 }
 
 function normaliseConfidence(value: unknown): AnswerConfidence {

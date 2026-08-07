@@ -11,7 +11,7 @@
 
 import "server-only";
 
-import { hydra } from "./hydradb";
+import { hydra, invalidateCollectionCache } from "./hydradb";
 import { COLLECTIONS, HYDRA_DATABASE } from "./env";
 
 export interface IngestedDocument {
@@ -67,14 +67,25 @@ export async function ingestDocument(
     collection: COLLECTIONS.docs,
     type: "knowledge",
     documents: file,
-    // documentMetadata is a JSON-encoded string on the wire, not an object.
-    documentMetadata: JSON.stringify({
-      source: "manual_upload",
-      filename: file.name,
-      uploaded_at: new Date().toISOString(),
-      ...extraMetadata,
-    }),
+    // A JSON-encoded *array* on the wire, one entry per document in
+    // `documents`, and each entry is a fixed envelope — arbitrary keys at the
+    // top level are rejected with INVALID_INPUT. Our own fields go under
+    // `additional_metadata`.
+    documentMetadata: JSON.stringify([
+      {
+        additional_metadata: {
+          source: "manual_upload",
+          filename: file.name,
+          uploaded_at: new Date().toISOString(),
+          ...extraMetadata,
+        },
+      },
+    ]),
   });
+
+  // The first upload brings the `docs` collection into existence, so the
+  // query layer's cached list is now stale.
+  invalidateCollectionCache();
 
   const data = (response as { data?: Record<string, unknown> })?.data ?? {};
   const results = Array.isArray(data.results) ? data.results : [];

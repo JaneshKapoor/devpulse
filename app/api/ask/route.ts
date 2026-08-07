@@ -55,7 +55,12 @@ export async function POST(request: Request) {
       question,
       mode,
       graphContext: mode === "thinking",
-      maxResults: mode === "thinking" ? 10 : 8,
+      // Thinking mode exists for questions spanning several sources, so its
+      // budget has to cover all of them. At 10 chunks a five-source question
+      // was answered from whichever two sources ranked highest, and the model
+      // then stated confidently that the others contained nothing — the worst
+      // kind of wrong, because the omission is invisible in the answer.
+      maxResults: mode === "thinking" ? 24 : 10,
       collections: collectionsForQuestion(decision, question),
     });
 

@@ -85,7 +85,9 @@ export async function POST() {
           question: spec.question,
           mode: spec.mode,
           graphContext: spec.mode === "thinking",
-          maxResults: spec.mode === "thinking" ? 10 : 8,
+          // The blockers leg is unscoped across every source, so it needs a
+          // wider budget than the single-collection legs beside it.
+          maxResults: spec.mode === "thinking" ? 24 : 10,
           collections: spec.collections,
         })
       )
@@ -178,6 +180,9 @@ export async function POST() {
         "Generate today's standup brief for this engineering team from the context above.",
       context: labelledContext,
       extraInstruction: BRIEF_INSTRUCTION,
+      // Four headings of bullets is several times a single answer, and running
+      // out mid-brief truncates the JSON envelope rather than just the prose.
+      maxTokens: 3600,
     });
 
     const sources = dedupeSources(successful.map((leg) => leg.result!));

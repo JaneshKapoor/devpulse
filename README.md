@@ -221,30 +221,37 @@ npm run test:router
 
 ### Hard questions — expected vs actual
 
-Run these from the chips on the Ask tab. Fill the **Actual** column from your own run; the Metrics tab gives you the numbers directly.
+Run these from the chips on the Ask tab. The **Actual** column below is from a
+real run on 2026-08-07 against the seeded demo data, with
+`gpt-oss-120b` on Fireworks.
 
-| # | Question | Routed (score) | Sources expected | Expected answer | Actual |
+| # | Question | Routed | Sources expected | Expected answer | Actual |
 |---|---|---|---|---|---|
-| 1 | What has the manager asked Janesh to do today, across which channels, and where has he responded? | thinking (9) | Gmail, Slack, Linear | One request — review PR #482 — duplicated across all three. **Linear ENG-482 is the record of truth** (stated as such in the email itself). Responded **only in Slack** at 11:02, flagging the mobile refresh path. No Gmail reply, no Linear comment. | *(fill in)* |
-| 2 | Who filed BUG-123, which project are they working on, and what did they say about the fix in Slack? | thinking (11) | Linear, Slack | Filed by **Arjun Mehta**, project **Checkout Reliability** (Payments team). In `#payments` he said the fix is moving idempotency key generation from per-attempt to per-checkout-session. | *(fill in)* |
-| 3 | What did the team decide about the auth refactor in Slack, and has anyone started implementing it in GitHub? | thinking (6) | Slack, GitHub | Decision: short-lived 15-minute tokens plus refresh, two-week dual-accept window, Dmitri to implement. **Yes** — PR #482 implements it, currently open awaiting Janesh's review. | *(fill in)* |
-| 4 | What was blocked last sprint that is still blocked this sprint? | thinking (8) | Linear, Slack | **ENG-455** (Redis cluster migration), blocked on INFRA-88 for two weeks and still blocked. ENG-470 was blocked last sprint but is now done — should be excluded. | *(fill in)* |
-| 5 | Which pull requests are waiting on review, and has anyone flagged them in Slack? | thinking | GitHub, Slack | PR #481 (needs Dmitri) and PR #482 (needs Janesh). Sofia flagged both in `#eng-platform`, noting they block the Thursday cut. | *(fill in)* |
-| 6 | What did the team ship this week? | **fast** | GitHub | PR #479 (idempotency keys, fixes BUG-123) and PR #476 (rate limiter, ENG-470), both merged. Single-hop — demonstrates the router keeping easy questions cheap. | *(fill in)* |
+| 1 | What has the manager asked Janesh to do today, across which channels, and where has he responded? | thinking | Gmail, Slack, Linear | One request — review PR #482 — duplicated across all three. **Linear ENG-482 is the record of truth** (stated as such in the email itself). Responded **only in Slack** at 11:02, flagging the mobile refresh path. No Gmail reply, no Linear comment. | ✅ Correct. Named all three channels, identified the Slack 11:02 reply as the only response. 13.0 s, 16 chunks, high confidence. |
+| 2 | Who filed BUG-123, which project are they working on, and what did they say about the fix in Slack? | thinking | Linear, Slack | Filed by **Arjun Mehta**, project **Checkout Reliability** (Payments team). In `#payments` he said the fix is moving idempotency key generation from per-attempt to per-checkout-session. | ✅ Correct on all three hops, quoting the `#payments` message verbatim. 15.8 s, 16 chunks, high confidence. |
+| 3 | What did the team decide about the auth refactor in Slack, and has anyone started implementing it in GitHub? | thinking | Slack, GitHub | Decision: short-lived 15-minute tokens plus refresh, two-week dual-accept window, Dmitri to implement. **Yes** — PR #482 implements it, currently open awaiting Janesh's review. | ✅ Correct, including the two-week dual-accept window and the link to PR #482. 9.0 s, high confidence. |
+| 4 | What was blocked last sprint that is still blocked this sprint? | thinking | Linear, Slack | **ENG-455** (Redis cluster migration), blocked on INFRA-88 for two weeks and still blocked. ENG-470 was blocked last sprint but is now done — should be excluded. | ✅ Correct. Named ENG-455 only; correctly excluded the since-unblocked ENG-470. 8.9 s, high confidence. |
+| 5 | Which pull requests are waiting on review, and has anyone flagged them in Slack? | thinking | GitHub, Slack | PR #481 (needs Dmitri) and PR #482 (needs Janesh). Sofia flagged both in `#eng-platform`, noting they block the Thursday cut. | ✅ Correct on both PRs, both reviewers, and the Slack nudge. 10.7 s, high confidence. |
+| 6 | What did the team ship this week? | **fast** | GitHub | PR #479 (idempotency keys, fixes BUG-123) and PR #476 (rate limiter, ENG-470), both merged. Single-hop — demonstrates the router keeping easy questions cheap. | ⚠️ Partially correct. Reported the shipped rate-limiting feature via ENG-470 but answered from Linear rather than naming the two merged PRs. Fast mode's narrower budget is the tradeoff being demonstrated. **4.7 s** — roughly a third of the thinking-mode latency. |
 
 **Why question 1 is the interesting one:** the useful answer isn't *what* was asked — all three channels say the same thing. It's *"this is one request, not three; here is the tracked record; here is the single place he actually replied."* That's reasoning a per-tool search cannot do at all.
 
 ### Latency / accuracy
 
-Measured client-side around each call and recorded per question. Read the live numbers from the **Metrics** tab after a run; the shape to expect:
+Measured server-side around each call and recorded per question. Live numbers
+are on the **Metrics** tab; this is the run above.
 
-| Metric | Where it comes from |
+| Metric | Result |
 |---|---|
-| % answered in fast mode | Metrics tab, scored against the 60% target |
-| Avg latency, split fast vs thinking | Reported separately — the blended average hides the tradeoff |
-| Avg HydraDB calls per question | 1 per Ask; 4 per Standup Brief (parallel) |
-| Retrieval vs synthesis split | Per-answer metadata strip |
-| Est. cost | Fireworks token usage at a blended rate |
+| Accuracy on the 6 demo questions | 5 fully correct, 1 partially correct (Q6) |
+| Avg latency — thinking mode | **11.5 s** (5 questions, 8.9–15.8 s) |
+| Avg latency — fast mode | **4.7 s** — reported separately, because a blended average hides exactly the tradeoff the router exists to make |
+| Standup Brief | **19.0 s** for 4 retrievals + synthesis, run in parallel |
+| HydraDB calls per question | 1 per Ask; 4 per Standup Brief |
+| Chunks retrieved | 16 thinking / 10 fast |
+
+Latency is dominated by synthesis, not retrieval — HydraDB returns in roughly
+3 s, and the remainder is the model writing a cited multi-source answer.
 
 > On the router's own regression suite, 5 of 10 representative questions stay on fast mode. That ratio is dominated by the demo set being deliberately multi-hop-heavy; a realistic mix of day-to-day questions routes to fast mode far more often, which is what the Metrics tab measures live.
 
@@ -346,7 +353,13 @@ Things that are easy to get wrong against this stack, recorded because they cost
 
 **SDK request fields are camelCase.** The SDK serialises to snake_case itself. Writing `query_apps` or `max_results` does not error — it is silently dropped, quietly degrading retrieval. Always `queryApps`, `maxResults`, `graphContext`, `lookbackDays`, `providerAccountScope`.
 
-**`documentMetadata` is a JSON-encoded string**, not an object.
+**`documentMetadata` is a JSON-encoded *array*, and each entry is a fixed envelope.** One entry per document, even when uploading a single file. The entry accepts only `additional_metadata`, `document_metadata`, `file_id`, `id`, `infer`, `metadata`, `relations` and `source_id` — anything else is a 400. Your own fields go under `additional_metadata`, which is where they come back on query as `additionalMetadata`.
+
+**Queries must name their collections explicitly.** Omitting `collections` does not search everything — it searches *nothing* and returns zero chunks with no error, which is indistinguishable from an empty workspace. Naming a collection that does not exist yet is a hard 400 (`sub_tenant_ids do not exist`), and a collection only exists once something has been ingested into it. `queryHydra` therefore resolves scope against `databases.collections()` on every query, cached for 30 s.
+
+**Retrieved titles and URLs live in metadata, not on the source.** `sourceTitle` is the stored filename (`ENG-482.md`) and `source.url` is an internal `s3://` object path. The human title and real permalink are the ones you ingested under `additional_metadata`. Cite from those, and accept only `http(s)` URLs so a storage path can never reach the UI.
+
+**Prefer a non-reasoning model for synthesis.** A reasoning model spends the token budget narrating its working, then truncates mid-JSON — so the envelope never closes and the raw `{"answer":"…` leaks to the user. The parser now strips reasoning, scans for the *last* balanced JSON object, and salvages the answer string from a truncated envelope; but the cheaper fix is choosing a model that just answers.
 
 **Gmail has no `provider_account_scope`.** Every other provider gets a workspace or org identifier to keep connectors from colliding; Gmail carries its account email in `additional_metadata.account_email` instead, and authenticates via OAuth rather than an API token.
 
