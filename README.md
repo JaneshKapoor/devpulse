@@ -5,9 +5,6 @@
 DevPulse connects GitHub, Slack, Linear, Notion and Gmail into a single [HydraDB](https://hydradb.com) context graph, then answers questions that no one of those tools can answer alone — grounded, cited, and with the retrieval cost of every answer on display.
 
 > Built for the HydraDB × Connectors Hackathon.
-
----
-
 ## The problem
 
 Ask any of these in a single tool and you get nothing useful:
