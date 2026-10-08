@@ -1,4 +1,4 @@
-# DevPulse
+# DevPulse - by Janesh Kapoor
 
 **An AI engineering intelligence agent that answers cross-source questions about a software team.**
 
